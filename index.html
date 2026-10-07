@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+  <head>
+  	<title>CAMCO : Metro Station Ridership Map</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+		<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css">
+		<link rel="stylesheet" href="css/style.css">
+  <meta name="robots" content="noindex, follow">
+ <style>
+        #map {
+            height: 80%;
+            width: 100%;
+        }
+        button {
+            padding: 8px 12px;
+            margin-right: 6px;
+            border: 1px solid #ccc;
+            background: #fff;
+            cursor: pointer;
+            border-radius: 6px;
+        }
+
+        button.active {
+            background: #0066FF;
+            color: #fff;
+            border-color: #0066FF;
+        }
+		#sidebar ul li {
+			font-size: 15px;
+		}
+
+    </style>
+</head>
+  <body>
+		<div class="wrapper d-flex align-items-stretch">
+			<nav id="sidebar">
+				<div class="custom-menu">
+					<button type="button" id="sidebarCollapse" class="btn btn-primary">
+	          <i class="fa fa-bars"></i>
+	          <span class="sr-only">Toggle Menu</span>
+	        </button>
+        </div>
+				<div class="p-4">
+		  		<img src="images/ibm_logo_grey.png" style="width: 215px;margin-bottom: 20px;">
+				<ul class="list-unstyled components mb-5" id="stationList">
+				
+				</ul>
+
+	      </div>
+    	</nav>
+
+      <div id="content" class="p-4 p-md-5 pt-5">
+			<div class="row">
+				<div class="col-lg-6">
+					<b><h3>Metro Ridership GIS Map (L1 & L2)</h3></b>
+			</div>
+			<div class="col-lg-6 text-right">
+							<a href="" style="    text-decoration: unset; padding: 9px 12px;
+								margin-right: 6px;
+								border: 1px solid #ccc;
+								background: #2149ceff;
+								cursor: pointer;
+								color:white;
+								text-align:center
+								"> Reset</a>
+					<button id="btn_attractions" onclick="toggleLayer('attractions')">Attractions</button>
+					<button id="btn_hospitals" onclick="toggleLayer('hospitals')">Hospitals</button>
+					<button id="btn_business" onclick="toggleLayer('business')">Business</button>
+			</div>
+
+		</div>
+
+		<div id="map" style="flex:1;"></div>
+	</div>
+		</div>
+
+    <script src="js/jquery.min.js"></script>
+    <script src="js/popper.js"></script>
+    <script src="js/bootstrap.min.js"></script>
+    <script src="js/main.js"></script>
+    <script src="js/map_data.js"></script>
+	<script>
+
+    // async function loadJSON() {
+    //     try {
+    //         const response = await fetch('C:\wamp64\www\RidershipMap\map_data.json');
+    //         const data = await response.json();
+    //         return data;
+    //     } catch (error) {
+    //         console.error('Error:', error);
+    //     }
+    // }
+      
+
+// Initialize Map
+
+let map;
+let infoWindow;
+
+// visibility state
+const layerState = {
+    busStops: false,
+    attractions: false, 
+    hospitals: false,
+    business: false
+};
+
+function getMapStyles() {
+    return [
+        // business
+        {
+            featureType: "poi.business",
+            stylers: [{ visibility: layerState.business ? "on" : "off" }]
+        },
+
+        // attractions
+        {
+            featureType: "poi.attraction",
+            stylers: [{ visibility: layerState.attractions ? "on" : "off" }]
+        },
+
+        // hospitals / medical
+        {
+            featureType: "poi.medical",
+            stylers: [{ visibility: layerState.hospitals ? "on" : "off" }]
+        },
+
+        // bus stops / transit stations
+        {
+            featureType: "transit.station.bus",
+            stylers: [{ visibility: layerState.busStops ? "on" : "off" }]
+        },
+
+        // optional: keep other transit hidden by default
+        {
+            featureType: "transit.station",
+            elementType: "labels",
+            stylers: [{ visibility: "on" }]
+        },
+
+        // simplify road labels
+        {
+            featureType: "road",
+            elementType: "labels",
+            stylers: [{ visibility: "simplified" }]
+        },
+
+        // light gray roads
+        {
+            featureType: "road",
+            elementType: "geometry",
+            stylers: [{ color: "#e0e0e0" }]
+        }
+    ];
+}
+
+function updateMapStyle() {
+    map.setOptions({
+        styles: getMapStyles()
+    });
+}
+
+function toggleLayer(layerName) {
+    layerState[layerName] = !layerState[layerName];
+    updateMapStyle();
+
+    // optional: update button active style
+    const btn = document.getElementById("btn_" + layerName);
+    if (btn) {
+        btn.classList.toggle("active", layerState[layerName]);
+    }
+}
+
+
+
+async function initMap() {
+
+   // const mapData = await loadJSON();
+
+    map = new google.maps.Map(document.getElementById("map"), {
+        center: { lat: 24.60, lng: 46.66 },
+        zoom: 12,
+        styles: getMapStyles()
+    });
+
+    const stationListDiv = document.getElementById("stationList");
+
+    const blueLineCoords = [];
+    const redLineCoords = [];
+
+    const markersByCode = {};
+    infoWindow = new google.maps.InfoWindow();
+
+    mapData.map_data.forEach(station => {
+
+        const geo = JSON.parse(station.geographical_coordinates);
+        const lng = geo.coordinates[0];
+        const lat = geo.coordinates[1];
+
+        const position = { lat, lng };
+        const isBlueLine = station.metro_line_number === 'Line1';
+
+        const markerColor = isBlueLine ? '#0066FF' : '#FF0000';
+
+        const ridership = Number(station.ridership);
+        const markerScale = Math.min(
+            12,
+            Math.max(7, ridership / 100000)
+        );
+
+        const marker = new google.maps.Marker({
+            position: position,
+            map: map,
+            title: station.station_name_en,
+            icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: markerScale,
+                fillColor: markerColor,
+                fillOpacity: 1,
+                strokeColor: '#ffffff',
+                strokeWeight: 1
+            },
+            label: {
+                text: station.station_code,
+                color: "white",
+                fontSize: "10px",
+                fontWeight: "bold"
+            }
+        });
+
+        markersByCode[station.station_code] = marker;
+        const lineColor = isBlueLine ? '#0066FF' : '#D32F2F';
+
+
+
+        const infoHtml = `
+        <div style="
+            min-width:240px;
+            font-family: Arial, sans-serif;
+            border-radius:8px;
+            overflow:hidden;
+            box-shadow:0 4px 12px rgba(0,0,0,0.15);
+        ">
+            <div style="
+                background:${lineColor};
+                color:#fff;
+                padding:10px 12px;
+            ">
+                <div style="font-size:14px; font-weight:bold;">
+                    ${station.station_name_en}
+                </div>
+                <div style="font-size:11px; opacity:0.9;">
+                    ${station.metro_line_name}
+                </div>
+            </div>
+
+            <div style="padding:10px 12px; background:#fff;">
+
+                <div style="display:flex; align-items:center; margin-bottom:6px;">
+                    <span style="
+                        background:${lineColor};
+                        color:#fff;
+                        font-size:11px;
+                        padding:2px 6px;
+                        border-radius:4px;
+                        margin-right:6px;
+                    ">
+                        ${station.station_code}
+                    </span>
+                    <span style="font-size:12px; color:#555;">
+                        ${station.station_type}
+                    </span>
+                </div>
+
+                <div style="justify-content:space-between;align-items:center;">
+                    <br/>
+                    <b>Ridership Contribution</b><br/>
+                    <span style="color:${lineColor};font-weight:bold;font-size:16px;">
+                        ${station.ridership_percentage_text} 
+                    </span>
+                </div>
+
+
+            </div>
+        </div>
+        `;
+
+
+        marker.addListener("click", () => {
+            infoWindow.setContent(infoHtml);
+            infoWindow.open(map, marker);
+        });
+
+		// <li class="active">
+	    //         <a href="#"><span class="fa fa-home mr-3"></span> Home</a>
+	    //       </li>
+
+    // ➕ Build left-side list
+        const item = document.createElement("li");
+        //item.style.padding = "6px";
+        item.style.cursor = "pointer";
+        //item.style.borderBottom = "1px solid #eee";
+        item.innerHTML = `<a href="#">${station.station_code} – ${station.station_name_en}</a>`;
+
+        item.addEventListener("click", () => {
+            map.setZoom(15);
+            map.panTo(position);
+            infoWindow.setContent(infoHtml);
+            infoWindow.open(map, marker);
+        });
+
+        stationListDiv.appendChild(item);
+
+        if (isBlueLine) {
+            blueLineCoords.push(position);
+        } else {
+            redLineCoords.push(position);
+        }
+    });
+
+    // blue metro line
+    new google.maps.Polyline({
+        path: blueLineCoords,
+        geodesic: true,
+        strokeColor: "#0066FF",
+        strokeOpacity: 1.0,
+        strokeWeight: 4,
+        map: map
+    });
+
+    // red metro line
+    new google.maps.Polyline({
+        path: redLineCoords,
+        geodesic: true,
+        strokeColor: "#FF0000",
+        strokeOpacity: 1.0,
+        strokeWeight: 4,
+        map: map
+    });
+}
+
+</script>
+
+<!-- Replace YOUR_API_KEY -->
+ <!-- <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI" crossorigin="anonymous"></script> -->
+ <script
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCUVNN3YIHM1Yug2TOuoha4aKgWkh0TwvA&callback=initMap"
+    async
+    defer>
+ </script>
+
+</body>
+</html>
